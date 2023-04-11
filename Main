@@ -1,0 +1,1060 @@
+REPORT ZRSDSD MESSAGE-ID zsd.
+***********************************************************************
+* Description  : 電商訂單匯入產生SAP訂單
+***********************************************************************
+INCLUDE zbdcrecx2.
+INCLUDE zrsdsd521top.
+INCLUDE zrsdsd521f01.
+***********************************************************************
+* INITIALIZATION
+***********************************************************************
+INITIALIZATION.
+***********************************************************************
+*AT SELECTION SCREEN
+***********************************************************************
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+    PERFORM f4_filename USING p_file.
+***********************************************************************
+* Start-of-selection PAUL
+***********************************************************************
+START-OF-SELECTION.
+    IF p_file IS INITIAL.
+        MESSAGE s005(tl) DISPLAY LIKE 'E'.
+        STOP.
+    ENDIF.
+
+   "Check TCODE
+    CALL FUNCTION 'AUTHORITY_CHECK_TCODE'
+      EXPORTING
+        tcode = 'VA01'
+      EXCEPTIONS
+        ok = 0
+        not_ok = 2
+        OTHERS = 3.
+
+    PERFORM read_data.
+
+***********************************************************************
+* End-of-selection PAUL
+***********************************************************************
+END-OF-SELECTION.
+    "Write Number of Success, Error, All
+    WRITE: / text-001,(5) w_suc COLOR 2,
+             text-002, w_err COLOR 3,
+             text-003 ,(5) w_all COLOR 4.
+    IF t_vbeln[] IS NOT INITIAL.
+        LOOP AT t_vbeln INTO wa_vbeln.
+            WRITE: / wa_vbeln-cartNum, ' : ',  wa_vbeln-vbeln.
+        ENDLOOP.
+    ENDIF.
+*&---------------------------------------------------------------------*
+*& Form read_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM read_data.
+    SELECT land1 landx INTO CORRESPONDING FIELDS OF TABLE t_t005t
+      FROM t005t WHERE spras = sy-langu.
+    SELECT land1 bland bezei INTO CORRESPONDING FIELDS OF TABLE t_t005u
+      FROM t005u WHERE spras = sy-langu.
+
+    IF p_fubai = 'X'.       "福百
+        PERFORM get_file_data_fubai TABLES t_fubai USING wa_fubai p_file.
+        "整理資料
+        IF t_fubai[] IS NOT INITIAL.
+            DO 2 TIMES.
+                DELETE t_fubai INDEX 1.
+            ENDDO.
+        ENDIF.
+
+        "表頭 2 明細1
+        t_fubai2[] = t_fubai[].
+        SORT t_fubai2 BY cartNum.
+        DELETE ADJACENT DUPLICATES FROM t_fubai2 COMPARING cartNum.
+
+        PERFORM process_data_fubai.
+    ELSEIF p_qbo = 'X'.       "QBO
+*        PERFORM get_file_data_qbo TABLES t_qbo USING wa_qbo p_file.
+        PERFORM get_file_qbo TABLES t_qbo USING wa_qbo p_file.
+        "整理資料
+        IF t_qbo[] IS NOT INITIAL.
+            DO 2 TIMES.
+                DELETE t_qbo INDEX 1.
+            ENDDO.
+        ENDIF.
+
+        "分類
+        t_qbo2[] = t_qbo[].
+        SORT t_qbo2 BY mainDoc.
+        DELETE ADJACENT DUPLICATES FROM t_qbo2 COMPARING mainDoc.
+
+        PERFORM process_data_qbo.
+    ELSEIF p_shopee = 'X'.   "蝦皮
+        PERFORM get_file_data_shopee TABLES t_shopee USING wa_shopee p_file.
+
+        "整理資料
+        IF t_shopee[] IS NOT INITIAL.
+            DO 1 TIMES.
+                DELETE t_shopee INDEX 1.
+            ENDDO.
+        ENDIF.
+
+        t_shopee2[] = t_shopee[].
+        SORT t_shopee2 BY docNumber.
+        DELETE ADJACENT DUPLICATES FROM t_shopee2 COMPARING docNumber.
+
+        PERFORM process_data_shopee.
+    ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form PROCESS DATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM process_data_fubai .
+
+
+    CLEAR: wa_fubai2, wa_head.
+    LOOP AT t_fubai2 INTO wa_fubai2.
+
+        REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel..
+
+        "Header
+        CLEAR wa_head.
+        wa_head-doc_date = p_audat.
+        wa_head-doc_type = p_auart.
+        wa_head-sales_org = p_vkorg.
+        wa_head-distr_chan = p_vtweg.
+        wa_head-division = p_spart.
+        wa_head-sales_off = p_vkbur.
+        APPEND wa_head TO t_head.
+
+        "Condition
+*        CLEAR wa_cond.
+*        wa_cond-cond_type = 'PR01'.
+*        wa_cond-cond_value = wa_fubai2-cartNetwr.
+*        APPEND wa_cond TO t_cond.
+
+        "Partner
+        CLEAR wa_par.
+        "收貨人
+        wa_par-partn_role = 'WE'.
+        wa_par-partn_numb = p_kunnr.
+        wa_par-name = wa_fubai2-receiver.
+        "國家碼
+        CLEAR wa_t005t.
+        READ TABLE t_t005t INTO wa_t005t WITH KEY landx = wa_fubai2-catch30.
+        wa_par-country = wa_t005t-land1.
+        "郵遞區號
+        wa_par-postl_code = wa_fubai2-catch37.
+        wa_par-street = wa_fubai2-receiverAddr.
+        wa_par-telephone = wa_fubai2-receiverTel.
+        APPEND wa_par TO t_par.
+        "買方
+        wa_par-partn_role = 'AG'.
+        wa_par-partn_numb = p_kunnr.
+        wa_par-name = wa_fubai2-buyer.
+        APPEND wa_par TO t_par.
+
+        REFRESH t_item.
+        CLEAR: wa_fubai, w_posnr.
+        LOOP AT t_fubai INTO wa_fubai WHERE cartNum = wa_fubai2-cartNum.
+            w_posnr = w_posnr + 10.
+            "客製欄位
+            CLEAR wa_orderitem.
+            wa_orderitem-vbeln = wa_fubai-cartNum.
+            wa_orderitem-posnr = w_posnr.
+            wa_orderitem-subDoc = wa_fubai-num.
+            APPEND wa_orderitem TO t_orderitem.
+
+            ""Item
+            CLEAR wa_item.
+            wa_item-itm_number = w_posnr.
+            wa_item-short_text = wa_fubai-productName.
+            wa_item-material = wa_fubai-material.
+            APPEND wa_item TO t_item.
+
+            CONCATENATE wa_fubai-productName wa_fubai-productSelection INTO wa_fubai-productSelection SEPARATED BY ' ==> '.
+            "內文明細
+            CLEAR wa_proSel.
+            wa_proSel-posnr = w_posnr.
+            wa_proSel-text = wa_fubai-productSelection.
+            APPEND wa_proSel TO t_proSel.
+
+            "Condition
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = wa_fubai-netpr.
+            APPEND wa_cond TO t_cond.
+
+            "Schedule
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_date = wa_fubai-shipDate.
+            wa_sch-req_qty = wa_fubai-quantity.
+            APPEND wa_sch TO t_sch.
+
+            IF wa_fubai-status <> '已成立'.
+                w_status = 'X'.
+            ENDIF.
+
+            w_discount = w_discount + wa_fubai-discount.
+        ENDLOOP.
+
+        "折扣金額
+        IF w_discount IS NOT INITIAL.
+            CLEAR wa_item.
+            w_posnr = w_posnr + 10.
+            wa_item-itm_number = w_posnr.
+            wa_item-material = 'NC17'.
+            wa_item-short_text = '福百優惠'.
+            APPEND wa_item TO t_item.
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = w_discount.
+            APPEND wa_cond TO t_cond.
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_qty = '1'.
+            APPEND wa_sch TO t_sch.
+        ENDIF.
+        "運費
+        IF wa_fubai2-shipFee IS NOT INITIAL.
+            CLEAR wa_item.
+            w_posnr = w_posnr + 10.
+            wa_item-itm_number = w_posnr.
+            wa_item-material = 'NE12'.
+            wa_item-short_text = 'EC-運費'.
+            APPEND wa_item TO t_item.
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = wa_fubai2-shipFee.
+            APPEND wa_cond TO t_cond.
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_qty = '1'.
+            APPEND wa_sch TO t_sch.
+        ENDIF.
+
+       "只要有一筆狀態不為已成立
+      IF w_status IS INITIAL.
+          PERFORM create_salesorder.
+      ELSE.
+          w_err = w_err + 1.
+          w_all = w_all + 1.
+          CLEAR w_status.
+          CONTINUE.
+      ENDIF.
+
+
+       "建立內文
+       IF l_vbeln IS NOT INITIAL.
+          "商店備註
+          l_id = '0003'.
+          l_object = 'VBBK'.
+          l_name = l_vbeln.
+          "Put Texts in
+          CLEAR lwa_lines.
+          lwa_lines-tdline = wa_fubai2-remark1.
+          APPEND lwa_lines TO lt_lines.
+
+          CALL FUNCTION 'CREATE_TEXT'
+                EXPORTING
+                  fid                            = l_id
+                  flanguage                      = sy-langu
+                  fNAME                          = l_name
+                  fOBJECT                        = l_object
+                TABLES
+                  flines                         = lt_lines
+                EXCEPTIONS
+                  ID                            = 1
+                  LANGUAGE                      = 2
+                  NAME                          = 3
+                  NOT_FOUND                     = 4
+                  OBJECT                        = 5
+                  REFERENCE_CHECK               = 6
+                  WRONG_ACCESS_TO_ARCHIVE       = 7
+                  OTHERS                        = 8.
+          COMMIT WORK AND WAIT.
+          "訂購備註
+          l_id = '0001'.
+          l_object = 'VBBK'.
+          l_name = l_vbeln.
+          "Put Texts in
+          CLEAR lwa_lines.
+          lwa_lines-tdline = wa_fubai2-remark2.
+          APPEND lwa_lines TO lt_lines.
+          CALL FUNCTION 'CREATE_TEXT'
+                EXPORTING
+                  fid                            = l_id
+                  flanguage                      = sy-langu
+                  fNAME                          = l_name
+                  fOBJECT                        = l_object
+                TABLES
+                  flines                         = lt_lines
+                EXCEPTIONS
+                  ID                            = 1
+                  LANGUAGE                      = 2
+                  NAME                          = 3
+                  NOT_FOUND                     = 4
+                  OBJECT                        = 5
+                  REFERENCE_CHECK               = 6
+                  WRONG_ACCESS_TO_ARCHIVE       = 7
+                  OTHERS                        = 8.
+          COMMIT WORK AND WAIT.
+
+          "商品選項 存在明細中
+          CLEAR wa_proSel.
+          LOOP AT t_proSel INTO wa_proSel.
+              REFRESH lt_lines.
+              l_id = '0001'.
+              l_object = 'VBBP'.
+              l_name = |{ l_vbeln }{ wa_proSel-posnr }|.
+              "Put Texts in
+              CLEAR: lwa_lines, lt_lines[].
+              lwa_lines-tdline = wa_proSel-text.
+              APPEND lwa_lines TO lt_lines.
+              CALL FUNCTION 'CREATE_TEXT'
+                EXPORTING
+                  fid                            = l_id
+                  flanguage                      = sy-langu
+                  fNAME                          = l_name
+                  fOBJECT                        = l_object
+                TABLES
+                  flines                         = lt_lines
+                EXCEPTIONS
+                  ID                            = 1
+                  LANGUAGE                      = 2
+                  NAME                          = 3
+                  NOT_FOUND                     = 4
+                  OBJECT                        = 5
+                  REFERENCE_CHECK               = 6
+                  WRONG_ACCESS_TO_ARCHIVE       = 7
+                  OTHERS                        = 8.
+              COMMIT WORK AND WAIT.
+          ENDLOOP.
+
+          "寫入客製欄位
+          PERFORM change_salesorder_fubai.
+       ENDIF.
+
+
+        "Successfully Create
+        IF l_vbeln IS NOT INITIAL.
+            w_suc = w_suc + 1.
+            wa_vbeln-vbeln = l_vbeln.
+            wa_vbeln-cartNum = wa_fubai-cartNum.
+            APPEND wa_vbeln TO t_vbeln.
+        ELSE.
+            w_err = w_err + 1.
+        ENDIF.
+        w_all = w_all + 1.
+    ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form PROCESS DATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM process_data_qbo .
+
+    CLEAR wa_qbo2.
+    LOOP AT t_qbo2 INTO wa_qbo2.
+
+        REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel.
+
+        "表頭
+        CLEAR wa_head.
+        wa_head-doc_date = p_audat.
+        wa_head-doc_type = p_auart.
+        wa_head-sales_org = p_vkorg.
+        wa_head-distr_chan = p_vtweg.
+        wa_head-division = p_spart.
+        wa_head-sales_off = p_vkbur.
+        APPEND wa_head TO t_head.
+
+        "夥伴 收貨人
+        CLEAR wa_par.
+        wa_par-partn_role = 'WE'.
+        wa_par-partn_numb = p_kunnr.
+        wa_par-name = wa_qbo2-receiver.
+        wa_par-telephone = wa_qbo2-tel.
+        wa_par-telephone2 = wa_qbo2-cellphone.
+        CONCATENATE wa_qbo2-addr1 wa_qbo2-addr2 wa_qbo2-addr3 INTO wa_par-street.
+        "國家碼
+        CLEAR wa_t005t.
+        READ TABLE t_t005t INTO wa_t005t WITH KEY landx = wa_qbo2-addr1+0(2).
+        wa_par-country = wa_t005t-land1.
+        "郵遞區號
+        wa_par-postl_code = '111'.
+        APPEND wa_par TO t_par.
+
+        "買家
+        CLEAR wa_par.
+        wa_par-partn_role = 'AG'.
+        wa_par-partn_numb = p_kunnr.
+        wa_par-name = wa_qbo2-buyer.
+        wa_par-country = wa_t005t-land1.
+        wa_par-postl_code = '111'.
+        APPEND wa_par TO t_par.
+
+*        CLEAR wa_cond.
+*        wa_cond-cond_type = 'PR01'.
+*        wa_cond-currency = 'TWD'.
+*        wa_cond-cond_value = wa_qbo2-docPrice.
+*        APPEND wa_cond TO t_cond.
+
+
+        CLEAR: wa_qbo, w_posnr, t_orderitem[].
+        LOOP AT t_qbo INTO wa_qbo WHERE mainDoc = wa_qbo2-mainDoc.
+            w_posnr = w_posnr + 10.
+
+            CLEAR wa_orderitem.
+            wa_orderitem-vbeln = wa_qbo-mainDoc.
+            wa_orderitem-posnr = w_posnr.
+            wa_orderitem-subDoc = wa_qbo-subDoc.
+            APPEND wa_orderitem TO t_orderitem.
+
+            CLEAR wa_item.
+            wa_item-itm_number = w_posnr.
+            wa_item-short_text = wa_qbo-productName.
+            wa_item-material = wa_qbo-material.
+            APPEND wa_item TO t_item.
+            wa_cond-currency = 'TWD'.
+            CONCATENATE wa_qbo-productName wa_qbo-form INTO wa_qbo-form SEPARATED BY '==>'.
+            CLEAR wa_proSel.
+            wa_proSel-posnr = w_posnr.
+            wa_proSel-text = wa_qbo-form.
+            APPEND wa_proSel TO t_proSel.
+
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = wa_qbo-netpr.
+            APPEND wa_cond TO t_cond.
+
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_qty = wa_qbo-quantity.
+
+            APPEND wa_sch TO t_sch.
+
+            IF wa_qbo-status <> '已付款'.
+                w_status = 'X'.
+            ENDIF.
+
+        ENDLOOP.
+
+        IF w_status IS INITIAL.
+            PERFORM create_salesorder.
+        ELSE.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+            CLEAR w_status.
+            CONTINUE.
+        ENDIF.
+
+       "寫入內文以及新增欄位
+        IF l_vbeln IS NOT INITIAL.
+            "其他需求 出貨用備註
+            l_id = '0001'.
+            l_object = 'VBBK'.
+            l_name = l_vbeln.
+            "Put Texts in
+            CLEAR lwa_lines.
+            lwa_lines-tdline = wa_qbo2-else.
+            APPEND lwa_lines TO lt_lines.
+
+            CALL FUNCTION 'CREATE_TEXT'
+                  EXPORTING
+                    fid                            = l_id
+                    flanguage                      = sy-langu
+                    fNAME                          = l_name
+                    fOBJECT                        = l_object
+                  TABLES
+                    flines                         = lt_lines
+                  EXCEPTIONS
+                    ID                            = 1
+                    LANGUAGE                      = 2
+                    NAME                          = 3
+                    NOT_FOUND                     = 4
+                    OBJECT                        = 5
+                    REFERENCE_CHECK               = 6
+                    WRONG_ACCESS_TO_ARCHIVE       = 7
+                    OTHERS                        = 8.
+            COMMIT WORK AND WAIT.
+            "後台備註 內用備註
+            l_id = '0003'.
+            l_object = 'VBBK'.
+            l_name = l_vbeln.
+            "Put Texts in
+            CLEAR lwa_lines.
+            lwa_lines-tdline = wa_qbo2-backNotes.
+            APPEND lwa_lines TO lt_lines.
+            CALL FUNCTION 'CREATE_TEXT'
+                  EXPORTING
+                    fid                            = l_id
+                    flanguage                      = sy-langu
+                    fNAME                          = l_name
+                    fOBJECT                        = l_object
+                  TABLES
+                    flines                         = lt_lines
+                  EXCEPTIONS
+                    ID                            = 1
+                    LANGUAGE                      = 2
+                    NAME                          = 3
+                    NOT_FOUND                     = 4
+                    OBJECT                        = 5
+                    REFERENCE_CHECK               = 6
+                    WRONG_ACCESS_TO_ARCHIVE       = 7
+                    OTHERS                        = 8.
+            COMMIT WORK AND WAIT.
+            "寫入明細 內文
+            CLEAR wa_proSel.
+            LOOP AT t_proSel INTO wa_proSel.
+                REFRESH lt_lines.
+                l_id = '0001'.
+                l_object = 'VBBP'.
+                l_name = |{ l_vbeln }{ wa_proSel-posnr }|.
+                "Put Texts in
+                CLEAR: lwa_lines, lt_lines[].
+                lwa_lines-tdline = wa_proSel-text.
+                APPEND lwa_lines TO lt_lines.
+                CALL FUNCTION 'CREATE_TEXT'
+                  EXPORTING
+                    fid                            = l_id
+                    flanguage                      = sy-langu
+                    fNAME                          = l_name
+                    fOBJECT                        = l_object
+                  TABLES
+                    flines                         = lt_lines
+                  EXCEPTIONS
+                    ID                            = 1
+                    LANGUAGE                      = 2
+                    NAME                          = 3
+                    NOT_FOUND                     = 4
+                    OBJECT                        = 5
+                    REFERENCE_CHECK               = 6
+                    WRONG_ACCESS_TO_ARCHIVE       = 7
+                    OTHERS                        = 8.
+            ENDLOOP.
+            COMMIT WORK AND WAIT.
+
+
+            "寫入客製欄位
+            PERFORM change_salesorder_qbo.
+        ENDIF.
+
+        IF l_vbeln IS NOT INITIAL.
+            w_suc = w_suc + 1.
+            CLEAR wa_vbeln.
+            wa_vbeln-vbeln = l_vbeln.
+            wa_vbeln-cartNum = wa_qbo2-MainDoc.
+            APPEND wa_vbeln TO t_vbeln.
+        ELSE.
+            w_err = w_err + 1.
+        ENDIF.
+        w_all = w_all + 1.
+    ENDLOOP.
+
+    CLEAR: l_vbeln.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form PROCESS DATA
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM process_data_shopee .
+    CLEAR w_coupon.
+    CLEAR wa_shopee2.
+    LOOP AT t_shopee2 INTO wa_shopee2.
+
+        REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel.
+
+        "表頭
+        CLEAR wa_head.
+        wa_head-doc_date = p_audat.
+        wa_head-doc_type = p_auart.
+        wa_head-sales_org = p_vkorg.
+        wa_head-distr_chan = p_vtweg.
+        wa_head-division = p_spart.
+        wa_head-sales_off = p_vkbur.
+        APPEND wa_head TO t_head.
+
+        "Partner
+        CLEAR wa_par.
+        wa_par-partn_role = 'WE'.
+        wa_par-partn_numb = p_kunnr.
+        wa_par-name = wa_shopee2-receiver.
+
+        READ TABLE t_t005u INTO wa_t005u WITH KEY bezei = wa_shopee2-catch18.
+        wa_par-country = wa_t005u-land1.
+        wa_par-region = wa_t005u-bland.
+        wa_par-postl_code = wa_shopee2-postCode.
+        APPEND wa_par TO t_par.
+
+        CLEAR wa_t005t.
+        READ TABLE t_t005u INTO wa_t005u WITH KEY bezei = wa_shopee2-catch18.
+        wa_par-country = wa_t005u-land1.
+        wa_par-region = wa_t005u-bland.
+
+        wa_par-postl_code = wa_shopee2-postCode.
+        wa_par-street = wa_shopee2-receiverAddr.
+        wa_par-telephone = wa_shopee2-receiverTel.
+        APPEND wa_par TO t_par.
+
+        "買方
+        CLEAR wa_par.
+        wa_par-partn_role = 'AG'.
+        wa_par-partn_numb = p_kunnr.
+        wa_par-name = wa_shopee2-buyerAccount.
+        wa_par-country = wa_t005u-land1.
+        APPEND wa_par TO t_par.
+
+        CLEAR: wa_shopee, w_posnr.
+        LOOP AT t_shopee INTO wa_shopee WHERE docNumber = wa_shopee2-docNumber.
+            w_posnr = w_posnr + 10.
+            "Items
+            CLEAR wa_item.
+            wa_item-itm_number = w_posnr.
+            wa_item-material = wa_shopee-mainProduct.
+            wa_item-short_text = wa_shopee-productName.
+            APPEND wa_item TO t_item.
+
+            "商品選項
+            CONCATENATE wa_shopee-productName wa_shopee-productSelectionName INTO wa_shopee-productSelectionName SEPARATED BY '==>'.
+            CLEAR wa_proSel.
+            wa_proSel-posnr = w_posnr.
+            wa_proSel-text = wa_shopee-productSelectionName.
+            APPEND wa_proSel TO t_proSel.
+
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = wa_shopee-activityPrice.
+            APPEND wa_cond TO t_cond.
+
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_qty = wa_shopee-quantity.
+            APPEND wa_sch TO t_sch.
+
+            IF  wa_shopee-status <> '待出貨'.
+                w_status = 'X'.
+            ENDIF.
+
+            "蝦皮優惠計算
+            wa_shopee-coupon = wa_shopee-coupon + wa_shopee-feedback.
+            w_coupon = w_coupon + wa_shopee-coupon.
+        ENDLOOP.
+
+        "蝦皮運費
+        IF wa_shopee2-buyerShipFee IS NOT INITIAL.
+            w_posnr = w_posnr + 10.
+            CLEAR wa_item.
+            wa_item-itm_number = w_posnr.
+            wa_item-material = 'NE11'.
+            wa_item-short_text = '運費'.
+            APPEND wa_item TO t_item.
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = wa_shopee2-buyerShipFee.
+            APPEND wa_cond TO t_cond.
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_qty = '1'.
+            APPEND wa_sch TO t_sch.
+        ENDIF.
+
+        "蝦皮優惠
+        IF w_coupon IS NOT INITIAL.
+            w_posnr = w_posnr + 10.
+
+            CLEAR wa_item.
+            wa_item-itm_number = w_posnr.
+            wa_item-material = 'NC18'.
+            wa_item-short_text = '蝦皮優惠'.
+            APPEND wa_item TO t_item.
+            CLEAR wa_cond.
+            wa_cond-itm_number = w_posnr.
+            wa_cond-cond_type = 'PR01'.
+            wa_cond-currency = 'TWD'.
+            wa_cond-cond_value = w_coupon.
+            APPEND wa_cond TO t_cond.
+            CLEAR wa_sch.
+            wa_sch-itm_number = w_posnr.
+            wa_sch-req_qty = '1'.
+            APPEND wa_sch TO t_sch.
+        ENDIF.
+
+
+        "Bapi Create
+        IF w_status IS INITIAL.
+            PERFORM create_salesorder.
+        ELSE.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+            CLEAR w_status.
+            CONTINUE.
+        ENDIF.
+
+        "成功的話寫入表頭內文
+        IF sy-subrc = 0.
+            "買家備註 出貨用備註
+            l_id = '0001'.
+            l_object = 'VBBK'.
+            l_name = l_vbeln.
+            "Put Texts in
+            CLEAR lwa_lines.
+            lwa_lines-tdline = wa_shopee2-buyerNotes.
+            APPEND lwa_lines TO lt_lines.
+
+            CALL FUNCTION 'CREATE_TEXT'
+                  EXPORTING
+                    fid                            = l_id
+                    flanguage                      = sy-langu
+                    fNAME                          = l_name
+                    fOBJECT                        = l_object
+                  TABLES
+                    flines                         = lt_lines
+                  EXCEPTIONS
+                    ID                            = 1
+                    LANGUAGE                      = 2
+                    NAME                          = 3
+                    NOT_FOUND                     = 4
+                    OBJECT                        = 5
+                    REFERENCE_CHECK               = 6
+                    WRONG_ACCESS_TO_ARCHIVE       = 7
+                    OTHERS                        = 8.
+
+            "寫入明細內文
+            CLEAR wa_proSel.
+
+            LOOP AT t_proSel INTO wa_proSel.
+                REFRESH lt_lines.
+                l_id = '0001'.
+                l_object = 'VBBP'.
+                l_name = |{ l_vbeln }{ wa_proSel-posnr }|.
+                "Put Texts in
+                CLEAR: lwa_lines, lt_lines[].
+                lwa_lines-tdline = wa_proSel-text.
+                APPEND lwa_lines TO lt_lines.
+                CALL FUNCTION 'CREATE_TEXT'
+                  EXPORTING
+                    fid                            = l_id
+                    flanguage                      = sy-langu
+                    fNAME                          = l_name
+                    fOBJECT                        = l_object
+                  TABLES
+                    flines                         = lt_lines
+                  EXCEPTIONS
+                    ID                            = 1
+                    LANGUAGE                      = 2
+                    NAME                          = 3
+                    NOT_FOUND                     = 4
+                    OBJECT                        = 5
+                    REFERENCE_CHECK               = 6
+                    WRONG_ACCESS_TO_ARCHIVE       = 7
+                    OTHERS                        = 8.
+                COMMIT WORK AND WAIT.
+            ENDLOOP.
+            CLEAR wa_proSel.
+
+            "寫入客製欄位
+            PERFORM change_salesorder_shopee.
+        ENDIF.
+
+
+        "End Report
+        IF l_vbeln IS NOT INITIAL.
+            w_suc = w_suc + 1.
+            CLEAR wa_vbeln.
+            wa_vbeln-vbeln = l_vbeln.
+            wa_vbeln-cartNum = wa_shopee2-docNumber.
+            APPEND wa_vbeln TO t_vbeln.
+        ELSE.
+            w_err = w_err + 1.
+        ENDIF.
+        w_all = w_all + 1.
+    ENDLOOP.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form create_salesorder
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> T_TAB
+*&      --> P_FILE
+*&---------------------------------------------------------------------*
+FORM create_salesorder .
+    REFRESH t_return.
+
+    CALL FUNCTION 'BAPI_SALESORDER_CREATEFROMDAT2'
+      EXPORTING
+        order_header_in = wa_head
+      IMPORTING
+        salesdocument = l_vbeln
+      TABLES
+        return = t_return
+        order_items_in = t_item
+        order_partners = t_par
+        order_schedules_in = t_sch
+        order_conditions_in = t_cond.
+    IF sy-subrc = 0.
+        COMMIT WORK AND WAIT.
+    ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form change_header
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM change_salesorder_fubai .
+    DATA: lwa_header_in LIKE bapisdh1,
+          lwa_header_inx LIKE bapisdh1x,
+          lwa_return LIKE bapiret2,
+          lt_return LIKE STANDARD TABLE OF bapiret2 ,
+          lwa_item LIKE bapisditm,
+          lwa_item_x LIKE bapisditmx,
+          lt_item LIKE STANDARD TABLE OF lwa_item,
+          lt_item_x LIKE STANDARD TABLE OF lwa_item_x,
+          lt_extensionin LIKE STANDARD TABLE OF bapiparex,
+          lwa_extensionin LIKE bapiparex.
+    DATA: lwa_bapi_vbapx LIKE bape_vbapx,
+          lwa_bapi_vbap LIKE bape_vbap,
+          lwa_bapi_vbakx LIKE bape_vbakx,
+          lwa_bapi_vbak LIKE bape_vbak.
+    REFRESH :lt_item_x , lt_item ,lt_extensionin.
+
+    lwa_header_inx-updateflag = 'U'.
+    "購物車增加
+    CLEAR lwa_extensionin.
+    lwa_bapi_vbak-vbeln = l_vbeln.
+    lwa_bapi_vbak-zz1_ec_masterno_sdh = wa_fubai2-cartNum.
+    lwa_bapi_vbak-zz1_ec_pickupstore_sdh = wa_fubai2-shop.
+    lwa_bapi_vbak-zz1_ec_paytype_sdh = wa_fubai2-payment.
+    lwa_extensionin-structure = 'BAPE_VBAK'.
+    lwa_extensionin+30 = lwa_bapi_vbak.
+    APPEND lwa_extensionin TO lt_extensionin.
+    CLEAR lwa_extensionin.
+    lwa_bapi_vbakx-vbeln = l_vbeln.
+    lwa_bapi_vbakx-zz1_ec_masterno_sdh = 'X'.
+    lwa_bapi_vbakx-zz1_ec_pickupstore_sdh = 'X'.
+    lwa_bapi_vbakx-zz1_ec_paytype_sdh = 'X'.
+    lwa_extensionin-structure = 'BAPE_VBAKX'.
+    lwa_extensionin+30 = lwa_bapi_vbakx.
+    APPEND lwa_extensionin TO lt_extensionin.
+
+    CLEAR wa_item.
+    LOOP AT t_item INTO wa_item.
+        lwa_item-itm_number = wa_item-itm_number.
+        APPEND lwa_item TO lt_item.
+        lwa_item_x-itm_number = wa_item-itm_number.
+        lwa_item_x-updateflag = 'U'.
+        APPEND lwa_item_x TO lt_item_x.
+        CLEAR lwa_extensionin.
+        lwa_bapi_vbap-vbeln = l_vbeln.
+        lwa_bapi_vbap-posnr = wa_item-itm_number.
+        CLEAR wa_orderitem.
+        READ TABLE t_orderitem INTO wa_orderitem WITH KEY vbeln = wa_fubai2-cartNum posnr = wa_item-itm_number.
+        lwa_bapi_vbap-zz1_ec_orderitem_sdi = wa_orderitem-subDoc.
+        lwa_extensionin-structure = 'BAPE_VBAP'.
+        lwa_extensionin+30 = lwa_bapi_vbap.
+        APPEND lwa_extensionin TO lt_extensionin.
+        CLEAR lwa_extensionin.
+        lwa_bapi_vbapx-vbeln = l_vbeln.
+        lwa_bapi_vbapx-posnr = wa_item-itm_number.
+        lwa_bapi_vbapx-zz1_ec_orderitem_sdi = 'X'.
+        lwa_extensionin-structure = 'BAPE_VBAPX'.
+        lwa_extensionin+30 = lwa_bapi_vbapx.
+        APPEND lwa_extensionin TO lt_extensionin.
+    ENDLOOP.
+
+    CALL FUNCTION 'BAPI_SALESORDER_CHANGE'
+      EXPORTING
+        salesdocument               = l_vbeln
+        order_header_in             = lwa_header_in
+        order_header_inx            = lwa_header_inx
+      TABLES
+        return                      = lt_return
+        order_item_in               = lt_item
+        order_item_inx              = lt_item_x
+        extensionin                 = lt_extensionin
+             .
+    LOOP AT lt_return INTO lwa_return WHERE type = 'E' OR type = 'A'.
+
+    ENDLOOP.
+    COMMIT WORK AND WAIT.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form change_header
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM change_salesorder_qbo .
+    DATA: lwa_header_in LIKE bapisdh1,
+          lwa_header_inx LIKE bapisdh1x,
+          lwa_return LIKE bapiret2,
+          lt_return LIKE STANDARD TABLE OF bapiret2 ,
+          lwa_item LIKE bapisditm,
+          lwa_item_x LIKE bapisditmx,
+          lt_item LIKE STANDARD TABLE OF lwa_item,
+          lt_item_x LIKE STANDARD TABLE OF lwa_item_x,
+          lt_extensionin LIKE STANDARD TABLE OF bapiparex,
+          lwa_extensionin LIKE bapiparex.
+    DATA: lwa_bapi_vbapx LIKE bape_vbapx,
+          lwa_bapi_vbap LIKE bape_vbap,
+          lwa_bapi_vbakx LIKE bape_vbakx,
+          lwa_bapi_vbak LIKE bape_vbak.
+    REFRESH :lt_item_x , lt_item ,lt_extensionin.
+
+    lwa_header_inx-updateflag = 'U'.
+    "購物車增加
+    CLEAR lwa_extensionin.
+    lwa_bapi_vbak-vbeln = l_vbeln.
+    lwa_bapi_vbak-zz1_ec_masterno_sdh = wa_qbo2-mainDoc.
+    lwa_bapi_vbak-zz1_ec_paytype_sdh = wa_qbo2-payment.
+    lwa_extensionin-structure = 'BAPE_VBAK'.
+    lwa_extensionin+30 = lwa_bapi_vbak.
+    APPEND lwa_extensionin TO lt_extensionin.
+    CLEAR lwa_extensionin.
+    lwa_bapi_vbakx-vbeln = l_vbeln.
+    lwa_bapi_vbakx-zz1_ec_masterno_sdh = 'X'.
+    lwa_bapi_vbakx-zz1_ec_paytype_sdh = 'X'.
+    lwa_extensionin-structure = 'BAPE_VBAKX'.
+    lwa_extensionin+30 = lwa_bapi_vbakx.
+    APPEND lwa_extensionin TO lt_extensionin.
+    CLEAR wa_item.
+    LOOP AT t_item INTO wa_item.
+        CLEAR lwa_item.
+        lwa_item-itm_number = wa_item-itm_number.
+        APPEND lwa_item TO lt_item.
+        CLEAR lwa_item_x.
+        lwa_item_x-itm_number = wa_item-itm_number.
+        lwa_item_x-updateflag = 'U'.
+        APPEND lwa_item_x TO lt_item_x.
+        CLEAR lwa_extensionin.
+        lwa_bapi_vbap-vbeln = l_vbeln.
+        lwa_bapi_vbap-posnr = wa_item-itm_number.
+        CLEAR wa_orderitem.
+        READ TABLE t_orderitem INTO wa_orderitem WITH KEY vbeln = wa_qbo2-mainDoc posnr = wa_item-itm_number.
+        lwa_bapi_vbap-zz1_ec_orderitem_sdi = wa_orderitem-subDoc.
+        lwa_extensionin-structure = 'BAPE_VBAP'.
+        lwa_extensionin+30 = lwa_bapi_vbap.
+        APPEND lwa_extensionin TO lt_extensionin.
+        CLEAR lwa_extensionin.
+        lwa_bapi_vbapx-vbeln = l_vbeln.
+        lwa_bapi_vbapx-posnr = wa_item-itm_number.
+        lwa_bapi_vbapx-zz1_ec_orderitem_sdi = 'X'.
+        lwa_extensionin-structure = 'BAPE_VBAPX'.
+        lwa_extensionin+30 = lwa_bapi_vbapx.
+        APPEND lwa_extensionin TO lt_extensionin.
+    ENDLOOP.
+
+    CALL FUNCTION 'BAPI_SALESORDER_CHANGE'
+      EXPORTING
+        salesdocument               = l_vbeln
+        order_header_in             = lwa_header_in
+        order_header_inx            = lwa_header_inx
+      TABLES
+        return                      = lt_return
+        order_item_in               = lt_item
+        order_item_inx              = lt_item_x
+        extensionin                 = lt_extensionin
+             .
+    LOOP AT lt_return INTO lwa_return WHERE type = 'E' OR type = 'A'.
+
+    ENDLOOP.
+    COMMIT WORK AND WAIT.
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form change_header
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*& -->  p1        text
+*& <--  p2        text
+*&---------------------------------------------------------------------*
+FORM change_salesorder_shopee .
+    DATA: lwa_header_in LIKE bapisdh1,
+          lwa_header_inx LIKE bapisdh1x,
+          lwa_return LIKE bapiret2,
+          lt_return LIKE STANDARD TABLE OF bapiret2 ,
+          lwa_item LIKE bapisditm,
+          lwa_item_x LIKE bapisditmx,
+          lt_item LIKE STANDARD TABLE OF lwa_item,
+          lt_item_x LIKE STANDARD TABLE OF lwa_item_x,
+          lt_extensionin LIKE STANDARD TABLE OF bapiparex,
+          lwa_extensionin LIKE bapiparex.
+    DATA: lwa_bapi_vbapx LIKE bape_vbapx,
+          lwa_bapi_vbap LIKE bape_vbap,
+          lwa_bapi_vbakx LIKE bape_vbakx,
+          lwa_bapi_vbak LIKE bape_vbak.
+    REFRESH :lt_item_x , lt_item ,lt_extensionin.
+
+    lwa_header_inx-updateflag = 'U'.
+    "購物車增加
+    CLEAR lwa_extensionin.
+    lwa_bapi_vbak-vbeln = l_vbeln.
+    lwa_bapi_vbak-zz1_ec_masterno_sdh = wa_shopee2-docNumber.
+    lwa_bapi_vbak-zz1_ec_pickupstore_sdh = wa_shopee2-shopNum.
+    lwa_bapi_vbak-zz1_ec_paytype_sdh = wa_shopee2-payment.
+    lwa_extensionin-structure = 'BAPE_VBAK'.
+    lwa_extensionin+30 = lwa_bapi_vbak.
+    APPEND lwa_extensionin TO lt_extensionin.
+    CLEAR lwa_extensionin.
+    lwa_bapi_vbakx-vbeln = l_vbeln.
+    lwa_bapi_vbakx-zz1_ec_masterno_sdh = 'X'.
+    lwa_bapi_vbakx-zz1_ec_pickupstore_sdh = 'X'.
+    lwa_bapi_vbakx-zz1_ec_paytype_sdh = 'X'.
+    lwa_extensionin-structure = 'BAPE_VBAKX'.
+    lwa_extensionin+30 = lwa_bapi_vbakx.
+    APPEND lwa_extensionin TO lt_extensionin.
+
+
+    CALL FUNCTION 'BAPI_SALESORDER_CHANGE'
+      EXPORTING
+        salesdocument               = l_vbeln
+        order_header_in             = lwa_header_in
+        order_header_inx            = lwa_header_inx
+      TABLES
+        return                      = lt_return
+        order_item_in               = lt_item
+        order_item_inx              = lt_item_x
+        extensionin                 = lt_extensionin
+             .
+    LOOP AT lt_return INTO lwa_return WHERE type = 'E' OR type = 'A'.
+
+    ENDLOOP.
+    COMMIT WORK AND WAIT.
+ENDFORM.
