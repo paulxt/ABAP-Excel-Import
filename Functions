@@ -1,0 +1,441 @@
+*--------------Functions---------------------*
+
+FORM get_file_data_fubai  TABLES   lt_input
+                        USING lwa_input STRUCTURE wa_fubai
+                          l_file.
+    DATA : lv_filename      TYPE string,
+       lt_records       TYPE solix_tab,
+       lv_headerxstring TYPE xstring,
+       lv_filelength    TYPE i,
+       l_index          TYPE sy-index.
+       "lv_qty           TYPE qsollwertc,
+       "lv_fltp          TYPE qsollwerte.
+
+    FIELD-SYMBOLS : <lt_data>   TYPE STANDARD TABLE,
+                    <lwa_data>  TYPE any,
+                    <l_field>   TYPE any,
+                    <l_field2>  TYPE any.
+
+    lv_filename = l_file.
+
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename                = lv_filename
+        filetype                = 'BIN'
+      IMPORTING
+        filelength              = lv_filelength
+        header                  = lv_headerxstring
+      TABLES
+        data_tab                = lt_records
+      EXCEPTIONS
+        file_open_error         = 1
+        file_read_error         = 2
+        no_batch                = 3
+        gui_refuse_filetransfer = 4
+        invalid_type            = 5
+        no_authority            = 6
+        unknown_error           = 7
+        bad_data_format         = 8
+        header_not_allowed      = 9
+        separator_not_allowed   = 10
+        header_too_long         = 11
+        unknown_dp_error        = 12
+        access_denied           = 13
+        dp_out_of_memory        = 14
+        disk_full               = 15
+        dp_timeout              = 16
+        OTHERS                  = 17.
+
+    "convert binary data to xstring
+    "if you are using cl_fdt_xl_spreadsheet in odata then skips this step
+    "as excel file will already be in xstring
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING
+        input_length = lv_filelength
+      IMPORTING
+        buffer       = lv_headerxstring
+      TABLES
+        binary_tab   = lt_records
+      EXCEPTIONS
+        failed       = 1
+        OTHERS       = 2.
+
+    IF sy-subrc <> 0.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDIF.
+
+    DATA: lo_excel_ref TYPE REF TO cl_fdt_xl_spreadsheet .
+
+    TRY .
+        lo_excel_ref = NEW cl_fdt_xl_spreadsheet(
+                                document_name = lv_filename
+                                xdocument     = lv_headerxstring ) .
+    CATCH cx_fdt_excel_core.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDTRY .
+
+    "Get List of Worksheets
+    TRY .
+        lo_excel_ref->if_fdt_doc_spreadsheet~get_worksheet_names(
+          IMPORTING
+            worksheet_names = DATA(lt_worksheets) ).
+    CATCH cx_sy_ref_is_initial.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDTRY.
+
+    IF NOT lt_worksheets IS INITIAL.
+        "Decide which sheet would you want to upload
+        READ TABLE lt_worksheets INTO DATA(lv_woksheetname) INDEX 1.
+
+        DATA(lo_data_ref) = lo_excel_ref->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
+                                                 lv_woksheetname ).
+        "now you have excel work sheet data in dyanmic internal table
+        ASSIGN lo_data_ref->* TO <lt_data>.
+    ENDIF.
+
+    IF <lt_data> IS ASSIGNED.
+        LOOP AT <lt_data> ASSIGNING <lwa_data>.
+            CLEAR: lwa_input.
+            DO 200 TIMES.
+               l_index = sy-index.
+
+               UNASSIGN: <l_field>, <l_field2>.
+               ASSIGN COMPONENT l_index OF STRUCTURE <lwa_data> TO <l_field>.
+               ASSIGN COMPONENT l_index OF STRUCTURE lwa_input TO <l_field2>.
+               IF <l_field> IS ASSIGNED AND <l_field2> IS ASSIGNED.
+                    <l_field2> = <l_field> .
+               ELSE.
+                    EXIT.
+               ENDIF.
+            ENDDO.
+            APPEND lwa_input TO lt_input.
+        ENDLOOP.
+**& 2022/10/27 shenli 如上方法轉換后，comp_qty字段如果是0.0xx的時候，會自動轉換為科學計數法，
+**& 因此需要將此計數方式改爲正常的小數進行處理。(ITR202210059-02)
+*        LOOP AT lt_input INTO wa_input.
+*          IF sy-tabix > 1.
+*            MOVE wa_input-comp_qty TO lv_fltp.
+*            CALL FUNCTION 'QSS0_FLTP_TO_CHAR_CONVERSION'
+*              EXPORTING
+*                i_number_of_digits       = 3
+*                i_fltp_value             = lv_fltp
+*              IMPORTING
+*                e_char_field             = lv_qty.
+*            MOVE lv_qty TO wa_input-comp_qty.
+*            MODIFY lt_input FROM wa_input.
+*          ENDIF.
+*        ENDLOOP.
+
+    ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_file_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> T_TAB
+*&      --> P_FILE
+*&---------------------------------------------------------------------*
+FORM get_file_data_qbo  TABLES   lt_input
+                        USING lwa_input STRUCTURE wa_qbo
+                          l_file.
+    DATA : lv_filename      TYPE string,
+       lt_records       TYPE solix_tab,
+       lv_headerxstring TYPE xstring,
+       lv_filelength    TYPE i,
+       l_index          TYPE sy-index.
+       "lv_qty           TYPE qsollwertc,
+       "lv_fltp          TYPE qsollwerte.
+
+    FIELD-SYMBOLS : <lt_data>   TYPE STANDARD TABLE,
+                    <lwa_data>  TYPE any,
+                    <l_field>   TYPE any,
+                    <l_field2>  TYPE any.
+
+    lv_filename = l_file.
+
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename                = lv_filename
+        filetype                = 'BIN'
+      IMPORTING
+        filelength              = lv_filelength
+        header                  = lv_headerxstring
+      TABLES
+        data_tab                = lt_records
+      EXCEPTIONS
+        file_open_error         = 1
+        file_read_error         = 2
+        no_batch                = 3
+        gui_refuse_filetransfer = 4
+        invalid_type            = 5
+        no_authority            = 6
+        unknown_error           = 7
+        bad_data_format         = 8
+        header_not_allowed      = 9
+        separator_not_allowed   = 10
+        header_too_long         = 11
+        unknown_dp_error        = 12
+        access_denied           = 13
+        dp_out_of_memory        = 14
+        disk_full               = 15
+        dp_timeout              = 16
+        OTHERS                  = 17.
+
+    "convert binary data to xstring
+    "if you are using cl_fdt_xl_spreadsheet in odata then skips this step
+    "as excel file will already be in xstring
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING
+        input_length = lv_filelength
+      IMPORTING
+        buffer       = lv_headerxstring
+      TABLES
+        binary_tab   = lt_records
+      EXCEPTIONS
+        failed       = 1
+        OTHERS       = 2.
+
+    IF sy-subrc <> 0.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDIF.
+
+    DATA: lo_excel_ref TYPE REF TO cl_fdt_xl_spreadsheet .
+
+    TRY .
+        lo_excel_ref = NEW cl_fdt_xl_spreadsheet(
+                                document_name = lv_filename
+                                xdocument     = lv_headerxstring ) .
+    CATCH cx_fdt_excel_core.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDTRY .
+
+    "Get List of Worksheets
+    TRY .
+        lo_excel_ref->if_fdt_doc_spreadsheet~get_worksheet_names(
+          IMPORTING
+            worksheet_names = DATA(lt_worksheets) ).
+    CATCH cx_sy_ref_is_initial.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDTRY.
+
+    IF NOT lt_worksheets IS INITIAL.
+        "Decide which sheet would you want to upload
+        READ TABLE lt_worksheets INTO DATA(lv_woksheetname) INDEX 1.
+
+        DATA(lo_data_ref) = lo_excel_ref->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
+                                                 lv_woksheetname ).
+        "now you have excel work sheet data in dyanmic internal table
+        ASSIGN lo_data_ref->* TO <lt_data>.
+    ENDIF.
+
+    IF <lt_data> IS ASSIGNED.
+        LOOP AT <lt_data> ASSIGNING <lwa_data>.
+            CLEAR: lwa_input.
+            DO 200 TIMES.
+               l_index = sy-index.
+
+               UNASSIGN: <l_field>, <l_field2>.
+               ASSIGN COMPONENT l_index OF STRUCTURE <lwa_data> TO <l_field>.
+               ASSIGN COMPONENT l_index OF STRUCTURE lwa_input TO <l_field2>.
+               IF <l_field> IS ASSIGNED AND <l_field2> IS ASSIGNED.
+                    <l_field2> = <l_field> .
+               ELSE.
+                    EXIT.
+               ENDIF.
+            ENDDO.
+            APPEND lwa_input TO lt_input.
+        ENDLOOP.
+**& 2022/10/27 shenli 如上方法轉換后，comp_qty字段如果是0.0xx的時候，會自動轉換為科學計數法，
+**& 因此需要將此計數方式改爲正常的小數進行處理。(ITR202210059-02)
+*        LOOP AT lt_input INTO wa_input.
+*          IF sy-tabix > 1.
+*            MOVE wa_input-comp_qty TO lv_fltp.
+*            CALL FUNCTION 'QSS0_FLTP_TO_CHAR_CONVERSION'
+*              EXPORTING
+*                i_number_of_digits       = 3
+*                i_fltp_value             = lv_fltp
+*              IMPORTING
+*                e_char_field             = lv_qty.
+*            MOVE lv_qty TO wa_input-comp_qty.
+*            MODIFY lt_input FROM wa_input.
+*          ENDIF.
+*        ENDLOOP.
+
+    ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_file_data
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> T_TAB
+*&      --> P_FILE
+*&---------------------------------------------------------------------*
+FORM get_file_data_shopee  TABLES   lt_input
+                        USING lwa_input STRUCTURE wa_shopee
+                          l_file.
+    DATA : lv_filename      TYPE string,
+       lt_records       TYPE solix_tab,
+       lv_headerxstring TYPE xstring,
+       lv_filelength    TYPE i,
+       l_index          TYPE sy-index.
+       "lv_qty           TYPE qsollwertc,
+       "lv_fltp          TYPE qsollwerte.
+
+    FIELD-SYMBOLS : <lt_data>   TYPE STANDARD TABLE,
+                    <lwa_data>  TYPE any,
+                    <l_field>   TYPE any,
+                    <l_field2>  TYPE any.
+
+    lv_filename = l_file.
+
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING
+        filename                = lv_filename
+        filetype                = 'BIN'
+      IMPORTING
+        filelength              = lv_filelength
+        header                  = lv_headerxstring
+      TABLES
+        data_tab                = lt_records
+      EXCEPTIONS
+        file_open_error         = 1
+        file_read_error         = 2
+        no_batch                = 3
+        gui_refuse_filetransfer = 4
+        invalid_type            = 5
+        no_authority            = 6
+        unknown_error           = 7
+        bad_data_format         = 8
+        header_not_allowed      = 9
+        separator_not_allowed   = 10
+        header_too_long         = 11
+        unknown_dp_error        = 12
+        access_denied           = 13
+        dp_out_of_memory        = 14
+        disk_full               = 15
+        dp_timeout              = 16
+        OTHERS                  = 17.
+
+    "convert binary data to xstring
+    "if you are using cl_fdt_xl_spreadsheet in odata then skips this step
+    "as excel file will already be in xstring
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING
+        input_length = lv_filelength
+      IMPORTING
+        buffer       = lv_headerxstring
+      TABLES
+        binary_tab   = lt_records
+      EXCEPTIONS
+        failed       = 1
+        OTHERS       = 2.
+
+    IF sy-subrc <> 0.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDIF.
+
+    DATA: lo_excel_ref TYPE REF TO cl_fdt_xl_spreadsheet .
+
+    TRY .
+        lo_excel_ref = NEW cl_fdt_xl_spreadsheet(
+                                document_name = lv_filename
+                                xdocument     = lv_headerxstring ) .
+    CATCH cx_fdt_excel_core.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDTRY .
+
+    "Get List of Worksheets
+    TRY .
+        lo_excel_ref->if_fdt_doc_spreadsheet~get_worksheet_names(
+          IMPORTING
+            worksheet_names = DATA(lt_worksheets) ).
+    CATCH cx_sy_ref_is_initial.
+        MESSAGE s127(swf_http) DISPLAY LIKE 'E'.
+    ENDTRY.
+
+    IF NOT lt_worksheets IS INITIAL.
+        "Decide which sheet would you want to upload
+        READ TABLE lt_worksheets INTO DATA(lv_woksheetname) INDEX 1.
+
+        DATA(lo_data_ref) = lo_excel_ref->if_fdt_doc_spreadsheet~get_itab_from_worksheet(
+                                                 lv_woksheetname ).
+        "now you have excel work sheet data in dyanmic internal table
+        ASSIGN lo_data_ref->* TO <lt_data>.
+    ENDIF.
+
+    IF <lt_data> IS ASSIGNED.
+        LOOP AT <lt_data> ASSIGNING <lwa_data>.
+            CLEAR: lwa_input.
+            DO 200 TIMES.
+               l_index = sy-index.
+
+               UNASSIGN: <l_field>, <l_field2>.
+               ASSIGN COMPONENT l_index OF STRUCTURE <lwa_data> TO <l_field>.
+               ASSIGN COMPONENT l_index OF STRUCTURE lwa_input TO <l_field2>.
+               IF <l_field> IS ASSIGNED AND <l_field2> IS ASSIGNED.
+                    <l_field2> = <l_field> .
+               ELSE.
+                    EXIT.
+               ENDIF.
+            ENDDO.
+            APPEND lwa_input TO lt_input.
+        ENDLOOP.
+**& 2022/10/27 shenli 如上方法轉換后，comp_qty字段如果是0.0xx的時候，會自動轉換為科學計數法，
+**& 因此需要將此計數方式改爲正常的小數進行處理。(ITR202210059-02)
+*        LOOP AT lt_input INTO wa_input.
+*          IF sy-tabix > 1.
+*            MOVE wa_input-comp_qty TO lv_fltp.
+*            CALL FUNCTION 'QSS0_FLTP_TO_CHAR_CONVERSION'
+*              EXPORTING
+*                i_number_of_digits       = 3
+*                i_fltp_value             = lv_fltp
+*              IMPORTING
+*                e_char_field             = lv_qty.
+*            MOVE lv_qty TO wa_input-comp_qty.
+*            MODIFY lt_input FROM wa_input.
+*          ENDIF.
+*        ENDLOOP.
+
+    ENDIF.
+
+ENDFORM.
+*&---------------------------------------------------------------------*
+*& Form get_file
+*&---------------------------------------------------------------------*
+*& text
+*&---------------------------------------------------------------------*
+*&      --> T_TAB
+*&      --> WA_TAB
+*&      --> P_FILE
+*&---------------------------------------------------------------------*
+FORM get_file_qbo  TABLES   lt_tab
+                    USING    lwa_tab STRUCTURE wa_qbo
+                        l_file.
+    TYPE-POOLS truxs.
+    DATA:it_raw TYPE truxs_t_text_data.
+
+    DATA: BEGIN OF gt_data OCCURS 0,
+            col1 TYPE char10,
+            col2 TYPE char10,
+          END OF gt_data.
+*    Excel传值
+    CALL FUNCTION 'TEXT_CONVERT_XLS_TO_SAP'
+      EXPORTING
+*       I_FIELD_SEPERATOR =
+*        i_line_header = 'X'
+        i_tab_raw_data = it_raw            " WORK TABLE
+        i_filename = l_file
+      TABLES
+        i_tab_converted_data = lt_tab[]   "ACTUAL DATA
+      EXCEPTIONS
+        conversion_failed = 1
+      OTHERS = 2.
+    IF sy-subrc <> 0.
+        MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+        WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+ENDFORM.
