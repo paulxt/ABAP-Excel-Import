@@ -1,10 +1,10 @@
-REPORT ZRSDSD MESSAGE-ID zsd.
+REPORT SDREPORT MESSAGE-ID zsd.
 ***********************************************************************
 * Description  : 電商訂單匯入產生SAP訂單
 ***********************************************************************
 INCLUDE zbdcrecx2.
-INCLUDE zrsdsd521top.
-INCLUDE zrsdsd521f01.
+INCLUDE top.
+INCLUDE function.
 ***********************************************************************
 * INITIALIZATION
 ***********************************************************************
@@ -61,7 +61,7 @@ FORM read_data.
     SELECT land1 bland bezei INTO CORRESPONDING FIELDS OF TABLE t_t005u
       FROM t005u WHERE spras = sy-langu.
 
-    IF p_fubai = 'X'.       "福百
+    IF p_fubai = 'X'.       "Fubai
         PERFORM get_file_data_fubai TABLES t_fubai USING wa_fubai p_file.
         "整理資料
         IF t_fubai[] IS NOT INITIAL.
@@ -92,7 +92,7 @@ FORM read_data.
         DELETE ADJACENT DUPLICATES FROM t_qbo2 COMPARING mainDoc.
 
         PERFORM process_data_qbo.
-    ELSEIF p_shopee = 'X'.   "蝦皮
+    ELSEIF p_shopee = 'X'.   "Shopee
         PERFORM get_file_data_shopee TABLES t_shopee USING wa_shopee p_file.
 
         "整理資料
@@ -229,7 +229,7 @@ FORM process_data_fubai .
             wa_sch-req_qty = '1'.
             APPEND wa_sch TO t_sch.
         ENDIF.
-        "運費
+        "Shipment Fee
         IF wa_fubai2-shipFee IS NOT INITIAL.
             CLEAR wa_item.
             w_posnr = w_posnr + 10.
@@ -260,7 +260,7 @@ FORM process_data_fubai .
       ENDIF.
 
 
-       "建立內文
+       "Create text
        IF l_vbeln IS NOT INITIAL.
           "商店備註
           l_id = '0003'.
