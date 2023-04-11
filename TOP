@@ -1,0 +1,247 @@
+*&---------------------------------------------------------------------*
+*& INCLUDE      TOP
+*&---------------------------------------------------------------------*
+TABLES: vbak, vbap.
+
+DATA:
+      l_vbeln TYPE vbeln,
+      w_posnr TYPE i,
+      w_status(1),
+      w_discount TYPE int8,
+      w_shipFee TYPE int8,
+      w_suc TYPE i,
+      w_err TYPE i,
+      w_all TYPE i,
+      w_coupon TYPE int8,
+      w_addUp TYPE int8.
+
+"BAPI
+DATA: wa_head LIKE bapisdhd1,                        "VBAK
+      t_head LIKE STANDARD TABLE OF wa_head,
+      wa_item LIKE bapisditm,                        "VBAP
+      t_item LIKE STANDARD TABLE OF wa_item,
+      wa_par LIKE bapiparnr,                          "PARTNER
+      t_par LIKE STANDARD TABLE OF wa_par,
+      wa_cond LIKE bapicond,
+      t_cond LIKE STANDARD TABLE OF wa_cond,
+      wa_sch LIKE bapischdl,
+      t_sch LIKE STANDARD TABLE OF wa_sch,
+      t_return LIKE STANDARD TABLE OF bapiret2.
+
+DATA: l_id       TYPE thead-tdid,
+      l_name     TYPE thead-tdname,
+      l_object   TYPE thead-tdobject.
+DATA:lt_lines TYPE STANDARD TABLE OF tline,
+     lwa_lines LIKE tline.
+
+DATA: BEGIN OF wa_proSel,
+        posnr TYPE vbap-posnr,
+        text(100),
+      END OF wa_proSel,
+      t_proSel LIKE STANDARD TABLE OF wa_proSel.
+DATA: BEGIN OF wa_orderitem,
+        vbeln(30),
+        posnr TYPE POSNR_VA,
+        subDoc(18),
+      END OF wa_orderitem,
+      t_orderitem LIKE STANDARD TABLE OF wa_orderitem.
+
+DATA: BEGIN OF wa_fubai,
+        cartNum(25),                    "購物車編號 (EC-購物車)
+        catch1(40),
+        num(25),                        "訂單編號   (EC-訂單編號)
+        date(8),                        "轉單日期時間
+        shipDate(8),                    "預計出貨日期
+        catch2(40),
+        catch3(40),
+        catch4(40),
+        receiver(20),                   "收件人
+        receiverTel(50),                "收件人電話
+        receiverAddr(50),               "收件地址
+*        postCode(3),                   "郵遞區號
+        shop(30),                       "門市
+        catch5(40),
+        productName(40),                "商品名稱
+        productSelection(50),           "商品選項 (結合商品名稱 加上==> 符號寫入內文
+        material(18),                   "商品料號
+        quantity(18),                   "數量
+        netpr(18),                      "商品單價
+        shipFee(12),                    "運費
+        catch6(40),
+        catch7(40),
+        catch8(40),
+        status(3),                      "訂單狀態   16
+        catch9(40),
+        catch10(40),
+        discount(18),                   "折扣金額 17
+        catch11(40),
+        payment(30),                    "附款方式 18
+        catch12(40),
+        catch13(40),
+        catch14(40),
+        catch15(40),
+        catch16(40),
+        catch17(40),
+        catch18(40),
+        remark1(30),                    "商店備註
+        remark2(30),                    "訂購備註
+        remark3(30),                    "貨運單備註
+        catch19(40),
+        catch20(40),
+        catch21(40),
+        catch22(40),
+        catch23(40),
+        buyer(10),                      "購買人
+        catch24(40),
+        catch25(40),
+        catch26(40),
+        catch27(40),
+        catch28(40),
+        catch29(40),                    "國碼
+        catch30(40),                    "國家
+        catch31(40),                    "取消原因
+        cartNetwr(18),                  "購物車總額
+        catch32(40),
+        catch33(40),
+        catch34(40),
+        catch35(40),
+        catch36(40),
+        catch37(40),                     "郵遞區號
+      END OF wa_fubai,
+      t_fubai LIKE STANDARD TABLE OF wa_fubai,
+      wa_fubai2 LIKE wa_fubai,
+      t_fubai2 LIKE STANDARD TABLE OF wa_fubai2.
+"Fubai output
+DATA: BEGIN OF wa_vbeln,
+        cartNum(25),
+        vbeln TYPE vbeln,
+      END OF wa_vbeln,
+      t_vbeln LIKE STANDARD TABLE OF wa_vbeln.
+
+DATA: BEGIN OF wa_qbo,
+        orderDate(50),                   "訂購時間
+        mainDoc(25),                    "主訂單編號
+        subDoc(25),                     "子訂單編號
+        buyer(25),                      "購買者
+        productName(40),                "商品名稱
+        form(50),                       "規格    結合商品名稱 加上==> 符號寫入內文
+        material(28),                   "自定義編號     寫入訂單物料欄位    material
+        quantity(18),                   "數量
+        netpr(18),                      "單價
+        catch1(40),
+        catch2(40),
+        docPrice(18),                   "訂單金額
+        payment(40),                    "付款方式
+        receiver(20),                   "收貨人
+        cellphone(18),                  "手機
+        tel(18),                        "電話
+        addr1(10),
+        addr2(10),                        "市    合進去地址
+        addr3(50),                       "宅配地址
+        catch3(40),
+        else(80),                       "其他需求
+        backNotes(50),                  "後台備註
+        catch4(40),
+        catch5(40),
+        status(10),                     "付款狀態
+      END OF wa_qbo,
+      t_qbo LIKE STANDARD TABLE OF wa_qbo,
+      wa_qbo2 LIKE wa_qbo,
+      t_qbo2 LIKE STANDARD TABLE OF wa_qbo2.
+
+DATA: BEGIN OF wa_shopee,
+        docNumber(18),                  "訂單編號 1
+        status(4),                      "訂單狀態 2
+        catch1(40),
+        buyerAccount(18),               "買家帳號 3
+        erdat(8),                       "訂單成立日期 4
+        catch(18),
+        buyerShipFee(18),               "買家支付運費 5
+        catch3(40),
+        catch4(40),
+        catch5(40),
+        catch6(40),
+        catch7(40),
+        catch8(40),
+        catch9(40),
+        coupon(18),                     "賣場優惠券
+        feedback(18),                   "賣家蝦幣回饋
+        catch10(40),
+        catch11(40),
+        catch12(40),
+        catch13(40),
+        catch14(40),
+        catch15(40),
+        productName(40),                "商品名稱
+        productSelectionName(40),       "商品選項名稱
+        catch2(40),
+        activityPrice(18),              "活動價格
+        mainProduct(18),                "主要商品貨號
+        catch28(40),
+        quantity(18),                   "數量
+        catch16(40),
+        catch17(40),
+        receiverAddr(50),               "收件地址
+        receiverTel(18),                "收件者電話
+        shopNum(20),                    "取件門市店號
+        catch18(40),                "城市
+        catch19(40),
+        postCode(4),                    "郵遞區號
+        receiver(18),                   "收件者姓名
+        catch20(40),
+        catch21(40),
+        catch22(40),
+        payment(25),                    "付款方式
+        catch23(40),
+        catch24(40),
+        catch25(40),
+        catch26(40),
+        catch27(40),
+        buyerNotes(40),                 "買家備註
+      END OF wa_shopee,
+      t_shopee LIKE STANDARD TABLE OF wa_shopee,
+      wa_shopee2 LIKE wa_shopee,
+      t_shopee2 LIKE STANDARD TABLE OF wa_shopee2.
+
+DATA: BEGIN OF wa_t005t,
+        land1 TYPE t005t-land1,
+        landx TYPE t005t-landx,
+      END OF wa_t005t,
+      t_t005t LIKE STANDARD TABLE OF wa_t005t.
+DATA: BEGIN OF wa_t005u,
+        bezei TYPE t005u-bezei,
+        land1 TYPE t005u-land1,
+        bland TYPE t005u-bland,
+      END OF wa_t005u,
+      t_t005u LIKE STANDARD TABLE OF wa_t005u.
+***********************************************************************
+* Selection Screen / Option / Parameter
+***********************************************************************
+"Radio Button
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT (32) TEXT-r01.
+PARAMETERS p_fubai RADIOBUTTON GROUP rad DEFAULT 'X'.
+SELECTION-SCREEN COMMENT (15) TEXT-r02.
+PARAMETERS p_qbo RADIOBUTTON GROUP rad.
+SELECTION-SCREEN COMMENT (15) TEXT-r03.
+PARAMETERS p_shopee RADIOBUTTON GROUP rad.
+SELECTION-SCREEN COMMENT (15) TEXT-r04.
+SELECTION-SCREEN END OF LINE.
+
+SELECTION-SCREEN BEGIN OF LINE.
+SELECTION-SCREEN COMMENT (40) TEXT-r05.
+SELECTION-SCREEN END OF LINE.
+PARAMETERS: p_auart TYPE vbak-auart OBLIGATORY.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_vkorg TYPE vbak-vkorg OBLIGATORY,
+            p_vtweg TYPE vbak-vtweg OBLIGATORY,
+            p_spart TYPE vbak-spart OBLIGATORY,
+            p_vkbur TYPE vbak-vkbur OBLIGATORY.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS: p_audat TYPE vbak-audat OBLIGATORY DEFAULT sy-datum.
+PARAMETERS p_kunnr TYPE vbak-kunnr OBLIGATORY.
+SELECTION-SCREEN SKIP.
+
+PARAMETERS p_file TYPE rlgrap-filename OBLIGATORY.
