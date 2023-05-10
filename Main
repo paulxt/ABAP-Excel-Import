@@ -1,10 +1,10 @@
-REPORT SDREPORT MESSAGE-ID zsd.
+REPORT Report MESSAGE-ID zsd.
 ***********************************************************************
 * Description  : 電商訂單匯入產生SAP訂單
 ***********************************************************************
 INCLUDE zbdcrecx2.
-INCLUDE top.
-INCLUDE function.
+INCLUDE zrsdsd521top.
+INCLUDE zrsdsd521f01.
 ***********************************************************************
 * INITIALIZATION
 ***********************************************************************
@@ -31,6 +31,26 @@ START-OF-SELECTION.
         ok = 0
         not_ok = 2
         OTHERS = 3.
+   "Check the Condition
+   SELECT SINGLE spaku INTO wa_tvkos-spaku FROM tvkos
+      WHERE spart = p_spart.
+    SELECT SINGLE vtwku INTO wa_tvkov-vtwku FROM tvkov
+      WHERE vtweg = p_vtweg.
+    SELECT * FROM knvv INTO CORRESPONDING FIELDS OF TABLE t_knvv
+      WHERE spart = wa_tvkos-spaku AND vtweg = wa_tvkov-vtwku
+      AND vkorg = p_vkorg AND kunnr = p_kunnr.
+    IF t_knvv[] IS INITIAL.
+        MESSAGE s197(vp) DISPLAY LIKE 'E' WITH p_kunnr |<'{ p_vkorg }', '{ p_vtweg }', '{ p_spart }'>|.
+        STOP.
+    ENDIF.
+    "Condition 2.
+    SELECT * INTO CORRESPONDING FIELDS OF TABLE t_tvkbz FROM tvkbz
+      WHERE vkorg = p_vkorg AND vkbur = p_vkbur.
+    IF t_tvkbz[] IS INITIAL.
+        MESSAGE s280(cz) DISPLAY LIKE 'E' WITH p_vkbur p_vkorg.
+        STOP.
+    ENDIF.
+
 
     PERFORM read_data.
 
@@ -47,6 +67,11 @@ END-OF-SELECTION.
             WRITE: / wa_vbeln-cartNum, ' : ',  wa_vbeln-vbeln.
         ENDLOOP.
     ENDIF.
+    IF t_err[] IS NOT INITIAL.
+        LOOP AT t_err INTO wa_err.
+            WRITE: / wa_err-cartNum, ':', wa_err-message.
+        ENDLOOP.
+    ENDIF.
 *&---------------------------------------------------------------------*
 *& Form read_data
 *&---------------------------------------------------------------------*
@@ -61,7 +86,7 @@ FORM read_data.
     SELECT land1 bland bezei INTO CORRESPONDING FIELDS OF TABLE t_t005u
       FROM t005u WHERE spras = sy-langu.
 
-    IF p_fubai = 'X'.       "Fubai
+    IF p_fubai = 'X'.       "福百
         PERFORM get_file_data_fubai TABLES t_fubai USING wa_fubai p_file.
         "整理資料
         IF t_fubai[] IS NOT INITIAL.
@@ -92,7 +117,7 @@ FORM read_data.
         DELETE ADJACENT DUPLICATES FROM t_qbo2 COMPARING mainDoc.
 
         PERFORM process_data_qbo.
-    ELSEIF p_shopee = 'X'.   "Shopee
+    ELSEIF p_shopee = 'X'.   "蝦皮
         PERFORM get_file_data_shopee TABLES t_shopee USING wa_shopee p_file.
 
         "整理資料
@@ -120,11 +145,26 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 FORM process_data_fubai .
 
-
     CLEAR: wa_fubai2, wa_head.
     LOOP AT t_fubai2 INTO wa_fubai2.
 
-        REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel..
+        CLEAR w_vbeln.
+        SELECT SINGLE k~vbeln INTO w_vbeln FROM vbak AS k JOIN vbap AS p ON k~vbeln = p~vbeln
+          WHERE k~zz1_ec_masterno_sdh = wa_fubai2-cartNum AND p~zz1_ec_orderitem_sdi = wa_fubai2-num.
+        IF w_vbeln IS NOT INITIAL.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+
+            CLEAR wa_err.
+            wa_err-cartNum = wa_fubai2-cartNum.
+            wa_err-message = TEXT-010.
+            APPEND wa_err TO t_err.
+
+            CONTINUE.
+        ENDIF.
+
+        CLEAR: w_errorOccur.
+        REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel.
 
         "Header
         CLEAR wa_head.
@@ -166,6 +206,12 @@ FORM process_data_fubai .
         REFRESH t_item.
         CLEAR: wa_fubai, w_posnr.
         LOOP AT t_fubai INTO wa_fubai WHERE cartNum = wa_fubai2-cartNum.
+
+            IF wa_fubai-deliveryMethod = '付款後7-11取貨(快速到店)'.
+                w_errorOccur = 'X'.
+                EXIT.
+            ENDIF.
+
             w_posnr = w_posnr + 10.
             "客製欄位
             CLEAR wa_orderitem.
@@ -178,7 +224,7 @@ FORM process_data_fubai .
             CLEAR wa_item.
             wa_item-itm_number = w_posnr.
             wa_item-short_text = wa_fubai-productName.
-            wa_item-material = wa_fubai-material.
+            wa_item-material_long = wa_fubai-material.
             APPEND wa_item TO t_item.
 
             CONCATENATE wa_fubai-productName wa_fubai-productSelection INTO wa_fubai-productSelection SEPARATED BY ' ==> '.
@@ -210,12 +256,20 @@ FORM process_data_fubai .
             w_discount = w_discount + wa_fubai-discount.
         ENDLOOP.
 
+        IF w_errorOccur = 'X'.
+            CLEAR wa_err.
+            wa_err-cartNum = wa_fubai-cartNum.
+            wa_err-message = TEXT-007.
+            APPEND wa_err TO t_err.
+            CONTINUE.
+        ENDIF.
+
         "折扣金額
         IF w_discount IS NOT INITIAL.
             CLEAR wa_item.
             w_posnr = w_posnr + 10.
             wa_item-itm_number = w_posnr.
-            wa_item-material = 'NC17'.
+            wa_item-material_long = 'NC17'.
             wa_item-short_text = '福百優惠'.
             APPEND wa_item TO t_item.
             CLEAR wa_cond.
@@ -229,12 +283,13 @@ FORM process_data_fubai .
             wa_sch-req_qty = '1'.
             APPEND wa_sch TO t_sch.
         ENDIF.
-        "Shipment Fee
-        IF wa_fubai2-shipFee IS NOT INITIAL.
+
+        "運費
+        IF wa_fubai2-shipFee IS NOT INITIAL AND wa_fubai2-shipFee > 0.
             CLEAR wa_item.
             w_posnr = w_posnr + 10.
             wa_item-itm_number = w_posnr.
-            wa_item-material = 'NE12'.
+            wa_item-material_long = 'NE12'.
             wa_item-short_text = 'EC-運費'.
             APPEND wa_item TO t_item.
             CLEAR wa_cond.
@@ -255,12 +310,18 @@ FORM process_data_fubai .
       ELSE.
           w_err = w_err + 1.
           w_all = w_all + 1.
+
+          CLEAR wa_err.
+          wa_err-cartNum = wa_fubai-cartNum.
+          wa_err-message = TEXT-004.
+          APPEND wa_err TO t_err.
+
           CLEAR w_status.
           CONTINUE.
       ENDIF.
 
 
-       "Create text
+       "建立內文
        IF l_vbeln IS NOT INITIAL.
           "商店備註
           l_id = '0003'.
@@ -359,6 +420,13 @@ FORM process_data_fubai .
             wa_vbeln-cartNum = wa_fubai-cartNum.
             APPEND wa_vbeln TO t_vbeln.
         ELSE.
+            CLEAR wa_return.
+            LOOP AT t_return INTO wa_return WHERE type = 'E' AND id = 'V1'.
+                CLEAR wa_err.
+                wa_err-cartNum = wa_fubai-cartNum.
+                wa_err-message = wa_return-message.
+                APPEND wa_err TO t_err.
+            ENDLOOP.
             w_err = w_err + 1.
         ENDIF.
         w_all = w_all + 1.
@@ -376,6 +444,22 @@ FORM process_data_qbo .
 
     CLEAR wa_qbo2.
     LOOP AT t_qbo2 INTO wa_qbo2.
+
+        CLEAR w_vbeln.
+        SELECT SINGLE k~vbeln INTO w_vbeln FROM vbak AS k JOIN vbap AS p ON k~vbeln = p~vbeln
+          WHERE k~zz1_ec_masterno_sdh = wa_qbo2-mainDoc AND p~zz1_ec_orderitem_sdi = wa_qbo2-subDoc.
+
+        IF w_vbeln IS NOT INITIAL.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+
+            CLEAR wa_err.
+            wa_err-cartNum = wa_qbo2-mainDoc.
+            wa_err-message = TEXT-010.
+            APPEND wa_err TO t_err.
+
+            CONTINUE.
+        ENDIF.
 
         REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel.
 
@@ -434,7 +518,7 @@ FORM process_data_qbo .
             CLEAR wa_item.
             wa_item-itm_number = w_posnr.
             wa_item-short_text = wa_qbo-productName.
-            wa_item-material = wa_qbo-material.
+            wa_item-material_long = wa_qbo-material.
             APPEND wa_item TO t_item.
             wa_cond-currency = 'TWD'.
             CONCATENATE wa_qbo-productName wa_qbo-form INTO wa_qbo-form SEPARATED BY '==>'.
@@ -467,6 +551,12 @@ FORM process_data_qbo .
         ELSE.
             w_err = w_err + 1.
             w_all = w_all + 1.
+
+            CLEAR wa_err.
+            wa_err-cartNum = wa_qbo-mainDoc.
+            wa_err-message = TEXT-005.
+            APPEND wa_err TO t_err.
+
             CLEAR w_status.
             CONTINUE.
         ENDIF.
@@ -569,6 +659,13 @@ FORM process_data_qbo .
             wa_vbeln-cartNum = wa_qbo2-MainDoc.
             APPEND wa_vbeln TO t_vbeln.
         ELSE.
+            LOOP AT t_return INTO wa_return WHERE type = 'E' AND id = 'V1'.
+                CLEAR wa_err.
+                wa_err-cartNum = wa_qbo-mainDoc.
+                wa_err-message = wa_return-message.
+                APPEND wa_err TO t_err.
+            ENDLOOP.
+
             w_err = w_err + 1.
         ENDIF.
         w_all = w_all + 1.
@@ -588,6 +685,21 @@ FORM process_data_shopee .
     CLEAR w_coupon.
     CLEAR wa_shopee2.
     LOOP AT t_shopee2 INTO wa_shopee2.
+
+        CLEAR w_vbeln.
+        CLEAR w_vbeln.
+        SELECT SINGLE vbeln INTO w_vbeln FROM vbak WHERE zz1_ec_masterno_sdh = wa_shopee2-docNumber.
+        IF w_vbeln IS NOT INITIAL.
+            w_err = w_err + 1.
+            w_all = w_all + 1.
+
+            CLEAR wa_err.
+            wa_err-cartNum = wa_shopee2-docNumber.
+            wa_err-message = TEXT-010.
+            APPEND wa_err TO t_err.
+
+            CONTINUE.
+        ENDIF.
 
         REFRESH: t_head, t_item, t_par, t_sch, t_cond, t_proSel.
 
@@ -637,7 +749,7 @@ FORM process_data_shopee .
             "Items
             CLEAR wa_item.
             wa_item-itm_number = w_posnr.
-            wa_item-material = wa_shopee-mainProduct.
+            wa_item-material_long = wa_shopee-mainProduct.
             wa_item-short_text = wa_shopee-productName.
             APPEND wa_item TO t_item.
 
@@ -670,11 +782,11 @@ FORM process_data_shopee .
         ENDLOOP.
 
         "蝦皮運費
-        IF wa_shopee2-buyerShipFee IS NOT INITIAL.
+        IF wa_shopee2-buyerShipFee IS NOT INITIAL AND wa_shopee2-buyerShipFee > 0.
             w_posnr = w_posnr + 10.
             CLEAR wa_item.
             wa_item-itm_number = w_posnr.
-            wa_item-material = 'NE11'.
+            wa_item-material_long = 'NE11'.
             wa_item-short_text = '運費'.
             APPEND wa_item TO t_item.
             CLEAR wa_cond.
@@ -695,7 +807,7 @@ FORM process_data_shopee .
 
             CLEAR wa_item.
             wa_item-itm_number = w_posnr.
-            wa_item-material = 'NC18'.
+            wa_item-material_long = 'NC18'.
             wa_item-short_text = '蝦皮優惠'.
             APPEND wa_item TO t_item.
             CLEAR wa_cond.
@@ -715,6 +827,11 @@ FORM process_data_shopee .
         IF w_status IS INITIAL.
             PERFORM create_salesorder.
         ELSE.
+            CLEAR wa_err.
+            wa_err-cartNum = wa_shopee-docNumber.
+            wa_err-message = TEXT-006.
+            APPEND wa_err TO t_err.
+
             w_err = w_err + 1.
             w_all = w_all + 1.
             CLEAR w_status.
@@ -796,6 +913,14 @@ FORM process_data_shopee .
             wa_vbeln-cartNum = wa_shopee2-docNumber.
             APPEND wa_vbeln TO t_vbeln.
         ELSE.
+            CLEAR wa_return.
+            LOOP AT t_return INTO wa_return WHERE type = 'E' AND id = 'V1'.
+                CLEAR wa_err.
+                wa_err-cartNum = wa_shopee-docNumber.
+                wa_err-message = wa_return-message.
+                APPEND wa_err TO t_err.
+            ENDLOOP.
+
             w_err = w_err + 1.
         ENDIF.
         w_all = w_all + 1.
