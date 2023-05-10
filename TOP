@@ -1,10 +1,11 @@
 *&---------------------------------------------------------------------*
-*& INCLUDE      TOP
+*& INCLUDE          TOP
 *&---------------------------------------------------------------------*
 TABLES: vbak, vbap.
 
 DATA:
       l_vbeln TYPE vbeln,
+      w_vbeln TYPE vbeln,
       w_posnr TYPE i,
       w_status(1),
       w_discount TYPE int8,
@@ -13,7 +14,8 @@ DATA:
       w_err TYPE i,
       w_all TYPE i,
       w_coupon TYPE int8,
-      w_addUp TYPE int8.
+      w_addUp TYPE int8,
+      w_errorOccur TYPE c.
 
 "BAPI
 DATA: wa_head LIKE bapisdhd1,                        "VBAK
@@ -26,6 +28,7 @@ DATA: wa_head LIKE bapisdhd1,                        "VBAK
       t_cond LIKE STANDARD TABLE OF wa_cond,
       wa_sch LIKE bapischdl,
       t_sch LIKE STANDARD TABLE OF wa_sch,
+      wa_return LIKE bapiret2,
       t_return LIKE STANDARD TABLE OF bapiret2.
 
 DATA: l_id       TYPE thead-tdid,
@@ -52,7 +55,7 @@ DATA: BEGIN OF wa_fubai,
         num(25),                        "訂單編號   (EC-訂單編號)
         date(8),                        "轉單日期時間
         shipDate(8),                    "預計出貨日期
-        catch2(40),
+        deliveryMethod(40),             "配送方式
         catch3(40),
         catch4(40),
         receiver(20),                   "收件人
@@ -63,7 +66,7 @@ DATA: BEGIN OF wa_fubai,
         catch5(40),
         productName(40),                "商品名稱
         productSelection(50),           "商品選項 (結合商品名稱 加上==> 符號寫入內文
-        material(18),                   "商品料號
+        material(40),                   "商品料號
         quantity(18),                   "數量
         netpr(18),                      "商品單價
         shipFee(12),                    "運費
@@ -117,9 +120,14 @@ DATA: BEGIN OF wa_vbeln,
         vbeln TYPE vbeln,
       END OF wa_vbeln,
       t_vbeln LIKE STANDARD TABLE OF wa_vbeln.
+DATA: BEGIN OF wa_err,
+        cartNum(25),
+        message(100),
+      END OF wa_err,
+      t_err LIKE STANDARD TABLE OF wa_err.
 
 DATA: BEGIN OF wa_qbo,
-        orderDate(50),                   "訂購時間
+        orderDate(50),                  "訂購時間
         mainDoc(25),                    "主訂單編號
         subDoc(25),                     "子訂單編號
         buyer(25),                      "購買者
@@ -176,7 +184,7 @@ DATA: BEGIN OF wa_shopee,
         productSelectionName(40),       "商品選項名稱
         catch2(40),
         activityPrice(18),              "活動價格
-        mainProduct(18),                "主要商品貨號
+        mainProduct(28),                "主要商品貨號
         catch28(40),
         quantity(18),                   "數量
         catch16(40),
@@ -214,6 +222,16 @@ DATA: BEGIN OF wa_t005u,
         bland TYPE t005u-bland,
       END OF wa_t005u,
       t_t005u LIKE STANDARD TABLE OF wa_t005u.
+
+"check if AUART in the combination with VKORG, VTWEG, SPART
+DATA: wa_tvkbz LIKE tvkbz,
+      t_tvkbz LIKE STANDARD TABLE OF wa_tvkbz.
+DATA: wa_tvkos LIKE tvkos,
+      t_tvkos LIKE STANDARD TABLE OF wa_tvkos.
+DATA: wa_tvkov LIKE tvkov,
+      t_tvkov LIKE STANDARD TABLE OF wa_tvkov.
+DATA: wa_knvv LIKE knvv,
+      t_knvv LIKE STANDARD TABLE OF wa_knvv.
 ***********************************************************************
 * Selection Screen / Option / Parameter
 ***********************************************************************
